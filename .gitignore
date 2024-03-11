@@ -1,0 +1,11 @@
+**/__pycache__
+**/.vscode
+
+
+
+# latex
+**.fdb_latexmk
+**.aux
+**.fls
+**.log
+**.synctex.gz

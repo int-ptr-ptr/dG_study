@@ -1,0 +1,159 @@
+\documentclass[12pt, letterpaper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{amsthm}
+\usepackage{enumitem}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{etoolbox}
+\usepackage{mathrsfs}
+
+\makeatletter
+\renewcommand*\env@matrix[1][\arraystretch]{%
+  \edef\arraystretch{#1}%
+  \hskip -\arraycolsep
+  \let\@ifnextchar\new@ifnextchar
+  \array{*\c@MaxMatrixCols c}}
+\makeatother
+
+\newtheorem{lemma}{Lemma}
+\newtheorem{sublemma}{Lemma}[lemma]
+
+\newenvironment{indblock}{
+		\bigskip
+
+		\begin{minipage}{5in}
+		\leftskip4em
+		\setlength{\parindent}{1em}
+		\setlength{\parskip}{5pt}
+	}{
+		\end{minipage}
+		\bigskip
+
+	}
+
+\newcommand{\F}{\mathbb F}
+\newcommand{\R}{\mathbb R}
+\newcommand{\C}{\mathbb C}
+\newcommand{\N}{\mathbb N}
+\DeclareMathOperator{\range}{range}
+\DeclareMathOperator{\rank}{rank}
+\DeclareMathOperator{\nul}{null}
+\DeclareMathOperator{\vspan}{span}
+\DeclareMathOperator{\trace}{trace}
+\DeclareMathOperator{\col}{col}
+\DeclareMathOperator{\real}{Re}
+\DeclareMathOperator{\imag}{Im}
+\DeclareMathOperator{\eig}{eig}
+\DeclareMathOperator{\diag}{diag}
+\DeclareMathOperator{\proj}{proj}
+\DeclareMathOperator{\conv}{conv}
+\DeclareMathOperator{\chara}{char}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\DeclareMathOperator*{\argmin}{arg\,min}
+\title{Discontinuous Galerkin Note Log; Document 1}
+\author{Kentaro Hanson}
+\date{}
+
+\begin{document}
+\begin{titlepage}
+\maketitle
+\end{titlepage}
+\begin{section}{Initializing the Python codebase}
+[2024-03-06]
+
+The spectral element and continuous spectral element meshes in 2D have been added as \verb+domain+s. I'm not sure if any different types will be made, but I may add types that inherit from them in the future. 3D may not be a good idea for a Python implementation, because the problems may become too large. Information is in \verb+notes.md+.
+
+\bigskip
+
+Unit tests for these elements are in \verb+tests/test_spec_elem_2D.py+. The 2D element \verb+bdry_normalderiv()+ method has no test yet.
+
+\bigskip
+
+I got to the point of setting up a good, easy, initial go-to problem, namely, the Diffusion equation (\verb+problems/diffusion.py+). An implementation which operates on the maze mesh, originally written for the mesh test, is \verb+sims/maze_diffuse.py+. I tried running the problem for the discontinuous Galerkin scheme with central flux, but encountered an issue with the discontinuous nature. I recreated it in \verb+sims/test_dg_diffuse.py+ with two elements. While the central scheme preserves flux, there is no force that pushes the diffused field together. In particular,
+$$\partial_t u = c\operatorname{lapl}(u),~~u\in((-1,0)\cup(0,1))\times (0,1)$$
+trivially admits the stable state
+$$u(x,y) = \left\{\begin{array}{ll}
+u_0 & \text{ if } x < 0\\
+u_1 & \text{ otherwise}
+\end{array}\right.$$
+which additionally preserves the flux term in the weak form:
+$$\int_{\Omega} v\partial_t u~dV=-\int_{\Omega}(\nabla u)\cdot\nabla( cv)~dV+\int_{\Gamma}cv(\nabla u)\cdot n\,dS$$
+When a central flux scheme is used ($\nabla u (x=0) = \frac{\nabla u(x\to 0^+) + \nabla u(x\to 0^-)}2$), I believe the following solution also works:
+$$u(x,y) = \left\{\begin{array}{ll}
+u_0 + \alpha x & \text{ if } x < 0\\
+u_1 + \alpha x & \text{ otherwise}
+\end{array}\right.$$
+for any slope $\alpha$, since the central flux reformulation should swallow the Dirac delta from the discontinuous jump. This is sort of what we see in the \verb+test_dg_diffuse+ code.
+
+A quick search led to a paper {\it Discontinuous Galerkin for Diffusion} (Leer \& Nomura 2012) which looked at advection-diffusion. They discussed this known issue of discontinuous diffusion being wonky, as well as operators to resolve it. For now, I will not go further than acknowledging its existence. I feel like I should look at the wave equation, as that is closer to the goal.
+
+% @inbook{doi:10.2514/6.2005-5108,
+% author = {Bram van Leer and Shohei Nomura},
+% title = {Discontinuous Galerkin for Diffusion},
+% booktitle = {17th AIAA Computational Fluid Dynamics Conference},
+% chapter = {},
+% pages = {},
+% doi = {10.2514/6.2005-5108},
+% URL = {https://arc.aiaa.org/doi/abs/10.2514/6.2005-5108},
+% eprint = {https://arc.aiaa.org/doi/pdf/10.2514/6.2005-5108}
+% }
+\end{section}
+
+\begin{section}{Moving to the Wave Equation}
+[2024-03-11]
+
+Igel (2017)
+% @book{10.1093/acprof:oso/9780198717409.003.0001,
+%     author = {Igel, Heiner},
+%     isbn = {9780198717409},
+%     title = "{1About Computational Seismology}",
+%     booktitle = "{Computational Seismology: A Practical Introduction}",
+%     publisher = {Oxford University Press},
+%     year = {2016},
+%     month = {11},
+%     abstract = "{The need for numerical approximations of the seismic wave-propaga-tion problem in the field of seismology is motivated by the fact that we have to deal with complex 3D structures. The term ‘computational seismology’ is defined and contrasted with other more classical approaches such as ray tracing approaches and quasi-analytical solutions such as normal mode techniques and the reflectivity method. The structure of the volume content is illustrated and guidelines are given how to use the content in combination with the supplementary electronic material.}",
+%     doi = {10.1093/acprof:oso/9780198717409.003.0001},
+%     url = {https://doi.org/10.1093/acprof:oso/9780198717409.003.0001},
+%     eprint = {https://academic.oup.com/book/0/chapter/194967140/chapter-pdf/42704068/acprof-9780198717409-chapter-1.pdf},
+% }
+discusses the wave equation as a first order system, so I could not work off of that section, since the flux is derived as an upwind-downwind scheme based on splitting the matrix. I believe that keeping the wave equation second-order is needed in order to be able to use the Newmark integration scheme.
+
+Trying to use the same flux as the diffusion equation just gave a reflective surface while only allowing minimal transmission through it.
+
+\bigskip
+
+The major point that I've missed in the previous section is the need to build a penalty term in the flux. Since all of those solutions are valid stationary states, we should intuitively place some sort of energy penalty to ensure gravitation towards the preferrable stable state. Keeping just the original boundary flux seems to just split the domain into completely separate problems, with some weak quasi-Neumann boundary condition (for lack of better words) linking them together. Put into the wave equation, this boundary condition is what gave us our reflection. Introducing an additional flux term such as
+$$\int_{B}\alpha [[u]]\cdot n~dS := \int_{B}\alpha (u^+ - u^-)~dS$$
+on the boundary would induce a flux based on the jump of $u$ across an element boundary, rather than the gradient over either side. There may be some analysis that can be done based on treating this jump as accounting for the Dirac-delta nature of the gradient $\nabla u$ ignored in the central flux formulation, but it looks like a different analysis was done in Grote et al. (2006). The core idea proposed in the paper was to introduce flux terms into a bilinear form while satisfying a few conditions. The important ones I've noticed:
+\begin{enumerate}[label=(\alph*)]
+	\item The bilinear form is symmetric.
+	\item Flux terms vanish at element boundaries for functions in the continuous problem (namely, those in $H_0^1(\Omega) \cap H^{1+\sigma}(\Omega)$, $\sigma \ge 1/2$).
+	\item The form satisfies a coercivity condition.
+\end{enumerate}
+Condition (c) is important for stability, while condition (b) is what allows us to treat this discontinuous problem as an extension of the continuous case. Grote et al. note that (a) is also necessary for stability analysis, but I would need to read more on that.
+
+The main concern I've had is that their proposed form
+$$a_h(u,v) = \sum_{K\in \mathcal T_h}\int_K c^2~(\nabla u)\cdot(\nabla v)~dV - \sum_{F\in \mathcal F_h}\int_{F}[[u]]\cdot \{\{c\nabla v\}\} + [[v]]\cdot \{\{c\nabla u\}\}~dS$$$$~~~~~~~~~~~~~~~~~~ + \sum_{F\in \mathcal F_h}a [[u]] \cdot [[v]]~dS$$
+was only for the problem with homogeneous Dirichlet conditions. I implemented this for my mixed problem by omitting the faces with a Neumann boundary condition from the sums, and including the boundary flux term on the Neumann boundary into the functional $(f,v)$. I will have to look into how the stability analysis changes, because I have no clue at present. That being said, it seems to perform fairly well (see \verb+outputs/wave_channel_2024_03_10+), but there is still some reflection (I apologize for lack of labels on those plots). For these runs, two grids of $100 \times 1$ (continous) SEM cells are placed side by side, with the above discontinuous Galerkin flux joining them at $x=50$. Every boundary is homogeneous-Neumann.
+
+% @article{doi:10.1137/05063194X,
+% author = { Grote, Marcus J. and  Schneebeli, Anna and  Sch\"{o}tzau, Dominik},
+% title = {Discontinuous Galerkin Finite Element Method for the Wave Equation},
+% journal = {SIAM Journal on Numerical Analysis},
+% volume = {44},
+% number = {6},
+% pages = {2408-2431},
+% year = {2006},
+% doi = {10.1137/05063194X},
+% URL = {https://doi.org/10.1137/05063194X},
+% eprint = {https://doi.org/10.1137/05063194X}
+% ,
+%     abstract = { The symmetric interior penalty discontinuous Galerkin finite element method is presented for the numerical discretization of the second‐order wave equation. The resulting stiffness matrix is symmetric positive definite, and the mass matrix is essentially diagonal; hence, the method is inherently parallel and leads to fully explicit time integration when coupled with an explicit time‐ stepping scheme. Optimal a priori error bounds are derived in the energy norm and the \$L^2\$‐norm for the semidiscrete formulation. In particular, the error in the energy norm is shown to converge with the optimal order \${\cal O}(h^{\min\{s,\ell\}})\$ with respect to the mesh size h, the polynomial degree \$\ell\$, and the regularity exponent s of the continuous solution. Under additional regularity assumptions, the \$L^2\$‐error is shown to converge with the optimal order \${\cal O}(h^{\min\{s,\ell\}})\$. Numerical results confirm the expected convergence rates and illustrate the versatility of the method. }
+% }
+
+
+
+\end{section}
+\end{document}

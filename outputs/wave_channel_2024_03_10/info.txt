@@ -1,0 +1,30 @@
+wave_channel_linked
+
+parameter alpha based on file name: 200 -> 20.0, 005 -> 0.05, etc.
+
+central scheme is used (mode = 0)
+
+
+configuration:
+================================================
+# characteristic length
+L = 10
+
+#number of elements
+num_cells = int(10 * L)
+#degree of the elements
+N = 3
+#init_wave: gaussian
+#variance
+sigma2 = .5 * L
+
+#wave speed
+C = 1 * L
+
+
+#================================
+#  animation / simulation
+tmax = 10
+dt = 0.001
+display_interval = 100
+#================================
