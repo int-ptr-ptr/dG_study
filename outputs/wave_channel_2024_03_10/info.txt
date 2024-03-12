@@ -28,3 +28,6 @@ tmax = 10
 dt = 0.001
 display_interval = 100
 #================================
+
+#                      oops, that's a bug   VVV
+init_wave = lambda x: np.exp(x**2/(-2*sigma2**2)) / np.sqrt(sigma2*2*np.pi)

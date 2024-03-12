@@ -118,7 +118,8 @@ Igel (2017)
 %     url = {https://doi.org/10.1093/acprof:oso/9780198717409.003.0001},
 %     eprint = {https://academic.oup.com/book/0/chapter/194967140/chapter-pdf/42704068/acprof-9780198717409-chapter-1.pdf},
 % }
-discusses the wave equation as a first order system, so I could not work off of that section, since the flux is derived as an upwind-downwind scheme based on splitting the matrix. I believe that keeping the wave equation second-order is needed in order to be able to use the Newmark integration scheme.
+discusses the wave equation as a first order system, so I could not work off of that section, since the flux is derived as an upwind-downwind scheme based on splitting the matrix. I believe that keeping the wave equation second-order is needed in order to be able to use the Newmark integration scheme. The wave equation we examine is
+$$\partial_{tt}u = \nabla\cdot (c^2 \nabla u)$$
 
 Trying to use the same flux as the diffusion equation just gave a reflective surface while only allowing minimal transmission through it.
 
@@ -126,7 +127,7 @@ Trying to use the same flux as the diffusion equation just gave a reflective sur
 
 The major point that I've missed in the previous section is the need to build a penalty term in the flux. Since all of those solutions are valid stationary states, we should intuitively place some sort of energy penalty to ensure gravitation towards the preferrable stable state. Keeping just the original boundary flux seems to just split the domain into completely separate problems, with some weak quasi-Neumann boundary condition (for lack of better words) linking them together. Put into the wave equation, this boundary condition is what gave us our reflection. Introducing an additional flux term such as
 $$\int_{B}\alpha [[u]]\cdot n~dS := \int_{B}\alpha (u^+ - u^-)~dS$$
-on the boundary would induce a flux based on the jump of $u$ across an element boundary, rather than the gradient over either side. There may be some analysis that can be done based on treating this jump as accounting for the Dirac-delta nature of the gradient $\nabla u$ ignored in the central flux formulation, but it looks like a different analysis was done in Grote et al. (2006). The core idea proposed in the paper was to introduce flux terms into a bilinear form while satisfying a few conditions. The important ones I've noticed:
+on the boundary $B$ would induce a flux based on the jump of $u$ across an element boundary, rather than the gradient over either side. There may be some analysis that can be done based on treating this jump as accounting for the Dirac-delta nature of the gradient $\nabla u$ ignored in the central flux formulation, but it looks like a different analysis was done in Grote et al. (2006). The core idea proposed in the paper was to introduce flux terms into a bilinear form while satisfying a few conditions. The important ones I've noticed:
 \begin{enumerate}[label=(\alph*)]
 	\item The bilinear form is symmetric.
 	\item Flux terms vanish at element boundaries for functions in the continuous problem (namely, those in $H_0^1(\Omega) \cap H^{1+\sigma}(\Omega)$, $\sigma \ge 1/2$).

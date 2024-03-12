@@ -32,7 +32,7 @@ display_interval = 100
 
 
 
-init_wave = lambda x: np.exp(x**2/(-2*sigma2**2)) / np.sqrt(sigma2*2*np.pi)
+init_wave = lambda x: np.exp(x**2/(-2*sigma2)) / np.sqrt(sigma2*2*np.pi)
 
 #======= non-DG
 edges = [(i,i+1,0,2,False) for i in range(num_cells-1)]
