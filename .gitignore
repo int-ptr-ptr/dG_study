@@ -9,3 +9,9 @@
 **.fls
 **.log
 **.synctex.gz
+
+
+
+
+_try.ipynb
+outputs/tmp/**

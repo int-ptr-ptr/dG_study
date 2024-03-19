@@ -156,9 +156,6 @@ def flux_SG2D(self):
     flux = np.zeros((self.basis_size))
     c = self.fields["c2"]
 
-    bc = self.boundary_conditions[0]
-    if bc[0] == 0:
-        flux
     for i,bc in enumerate(self.boundary_conditions):
         #we will enforce dirichlet after the euler step
         if bc[0] == 1: #neumann

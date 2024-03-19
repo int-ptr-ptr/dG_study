@@ -31,3 +31,21 @@ display_interval = 100
 
 #                      oops, that's a bug   VVV
 init_wave = lambda x: np.exp(x**2/(-2*sigma2**2)) / np.sqrt(sigma2*2*np.pi)
+
+
+
+
+#=======================================================
+# additionally, the following was set in the time loop.
+# this locked the continuity of u. I forgot to remove
+# it before doing these runs. To see the results
+# without them, see wave_channel_2024_03_14
+#=======================================================
+        u_avg = (se_grid.fields["u"][
+            se_grid.get_edge_provincial_inds(num_cells-1,0)] +
+            se_grid2.fields["u"][
+            se_grid2.get_edge_provincial_inds(0,2)]
+        )/2
+        se_grid.fields["u"][se_grid.get_edge_provincial_inds(num_cells-1,0)]\
+            = u_avg
+        se_grid2.fields["u"][se_grid2.get_edge_provincial_inds(0,2)] = u_avg

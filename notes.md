@@ -62,7 +62,7 @@ in the case of $u^0_j=0$ for $j\le M$ and $\tilde u_j=0$ for $j > M$ should be e
 
 We should theoretically be able to enforce Neumann conditions modifying the flux term with the substitution $(\nabla u)\cdot n \to g_N$. The other option would be at the Galerkin level, constraining $U$, which sounds pretty hard. I would wonder how different they are in terms of (enforce -> discretize) versus (discretize -> enforce).
 
-### Wave Equation
+### Wave Equation (2nd order)
 $$\partial_{tt} u=\nabla\cdot(c^2\nabla u),~~~~u\in\Omega$$
 $$u|_{\Gamma_D}=g_D,~~~\left.\left(\frac{\partial u}{\partial n}\right)\right|_{\Gamma_N}=g_N$$
 The weak form of the diffusion problem becomes:
@@ -76,8 +76,28 @@ $$\int_{\Omega} v\partial_{tt} w~dV=-\int_{\Omega}c^2 (\nabla w)\cdot(\nabla v)~
 over test functions $v$ that evaluate to zero on $\Gamma_D$. The last terms have no $w$, dependence, so can be combined into a functional $f(v)$. Solving for $w$ in the same space as where $v$ varies, we can reconstruct $u = w+u^0$.
 For the quadrature for SEM, this is equivalent to just working with $u$ on the full space (no restricting the test functions), and enforcing dirichlet by explicitly setting the value of $u$ on the boundary.
 
+
+### Wave Equation (1st order system)
+
+$$\partial_t \sigma = {c^2}  \nabla u$$
+$$\partial_t u = \nabla \cdot \sigma$$
+
+<!--$$\partial_t\begin{pmatrix}\sigma^1\\\sigma^2\\u\end{pmatrix}+\begin{pmatrix}0&0&-{c^2} \partial_x\\0&0&-{c^2} \partial_y\\-\partial_x&-\partial_y&0 \end{pmatrix}\begin{pmatrix}\sigma^1\\\sigma^2\\u\end{pmatrix} = 0$$-->
+
+$$\int_\Omega \tau \cdot \partial_t \sigma ~dV= \int_{\Omega }{c^2}  \tau\cdot \nabla u~dV=-\int_{\Omega}{c^2} u\nabla\cdot \tau~dV + \int_{\partial\Omega}{c^2} u\tau\cdot n~dS$$
+$$\int_\Omega v\partial_t u~dV = \int_\Omega v\nabla\cdot \sigma~dV = -\int_{\Omega}\sigma\cdot \nabla v~dV + \int_{\partial\Omega}v\sigma\cdot n~dS$$
+$$\langle V,\partial_t U\rangle + a(U,V)=\int_{\partial\Omega}V^T\begin{pmatrix}0&0&{c^2} n^1\\0&0&{c^2} n^2\\n^1&n^2&0 \end{pmatrix}U~dS$$
+where $V=(\tau^1,\tau^2,v)^T,U=(\sigma^1,\sigma^2,u)^T$. This matrix, if we call it $A$, has eigenpairs
+$$0,\begin{pmatrix}-n^2\\ n^1\\ 0\end{pmatrix};~~~~-c,\begin{pmatrix}n^1\\ n^2\\ -1/c\end{pmatrix};~~~~c,\begin{pmatrix}n^1\\ n^2\\ 1/c\end{pmatrix}$$
+The 1D advection equation ($\partial_t u +\gamma\partial_xu=0$) has weak form
+$$\int_{\Omega}v\partial_t u~dV=\int_{\Omega}\gamma u\partial_x v~dV-\int_{\partial\Omega}uv \,(\gamma n)~dS$$
+where $-\gamma n$ tales the place of $A$ ($n$ is the outward facing "surface" normal). A dG upwind scheme would use the value of $u$ on this side if $\gamma n > 0$ (the normal and velocity are in the same direction). Motivated by this, we would use $U$ on this side for directions with negative eigenvalue. More specifically, we can write
+$$A = -c e_- \omega^- + c e_+ \omega^+$$
+where $e_\pm$ are the corresponding eigenvectors and $\omega^\pm$ are the corresponding covectors to the eigenbasis. When evaluating the flux, we would use $U$ corresponding to the upwind values (this element plugs into $\omega^-$ and the adjacent element plugs into $\omega^+$). The corresponding covectors are
+$$\omega^-=\begin{pmatrix}\frac{n^1}{2}& \frac{n^2}{2} & -\frac{c}{2}\end{pmatrix},~~~~\omega^+=\begin{pmatrix}\frac{n^1}{2}& \frac{n^2}{2} & \frac{c}{2}\end{pmatrix}$$
+
+
 ## TODO
 - Clean up `lagrange_deriv()`, maybe move it to `GLL_UTIL`. `tensordot` will likely make it a lot better.
 - general `einsum` optimizations?
-- see [source](https://hal.science/hal-01443184/document) for better flux, they are stuck with homo dirichlet, though. We should be able to apply what they have to an expanded mixed form. (they used $\alpha = 20$, btw)
 - study the Dirichlet condition as a restriction. Is it equivalent once we use SEM's quadrature, or are we missing something?

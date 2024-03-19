@@ -4,7 +4,7 @@ import os, sys, types
 directory = os.path.dirname(__file__)
 sys.path.append(os.path.dirname(directory))
 
-import problems.simple_wave as wave
+import problems.simple_wave_order2 as wave
 import domains.spec_elem as SE
 
 
@@ -32,7 +32,7 @@ display_interval = 10
 
 
 
-init_wave = lambda x: np.exp(x**2/(-2*sigma2**2)) / np.sqrt(sigma2*2*np.pi)
+init_wave = lambda x: np.exp(x**2/(-2*sigma2)) / np.sqrt(sigma2*2*np.pi)
 
 #======= non-DG
 edges = [(i,i+1,0,2,False) for i in range(num_cells-1)]

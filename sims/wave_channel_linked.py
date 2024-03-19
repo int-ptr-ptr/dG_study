@@ -4,12 +4,13 @@ import os, sys, types
 directory = os.path.dirname(__file__)
 sys.path.append(os.path.dirname(directory))
 
-import problems.simple_wave as wave
+import problems.simple_wave_order1 as wave1
+import problems.simple_wave_order2 as wave2
 import domains.spec_elem as SE
 
 
 # characteristic length
-L = 10
+L = 5
 
 #number of elements
 num_cells = int(10 * L)
@@ -17,7 +18,7 @@ num_cells = int(10 * L)
 N = 3
 #init_wave: gaussian
 #variance
-sigma2 = .5 * L
+sigma2 = 2.5 * L
 
 #wave speed
 C = 1 * L
@@ -25,68 +26,94 @@ C = 1 * L
 
 #================================
 #  animation / simulation
-tmax = 10
-dt = 0.001
-display_interval = 100
+tmax = 2
+dt = 0.01
+display_interval = 10
 #================================
 
+#grote scheme parameter
+alpha = 1
 
 
 init_wave = lambda x: np.exp(x**2/(-2*sigma2)) / np.sqrt(sigma2*2*np.pi)
 
-#======= non-DG
-edges = [(i,i+1,0,2,False) for i in range(num_cells-1)]
-se_grid = SE.spectral_mesh_2D(N,edges)
-wave.endow_wave(se_grid)
-for i,elem in enumerate(se_grid.elems):
-    elem.fields["positions"][:,:,0] = \
-        0.5*(elem.knots[:,np.newaxis]+1) + i - num_cells/2
-    elem.fields["positions"][:,:,1] = 0.5*(elem.knots[np.newaxis,:]+1)
-    inds = se_grid.provincial_inds[i]
-    se_grid.fields["u"][inds] = init_wave(elem.fields["positions"][:,:,0])
-se_grid.fields["c2"][:] = C**2
-
-for bd in range(se_grid.num_boundary_edges):
-    se_grid.boundary_conditions[bd] = (1,0) #neumann
-
-#======== test2
-    
-se_grid2 = SE.spectral_mesh_2D(N,edges)
-wave.endow_wave(se_grid2)
-for i,elem in enumerate(se_grid2.elems):
-    elem.fields["positions"][:,:,0] = \
-        0.5*(elem.knots[:,np.newaxis]+1) + i + num_cells/2
-    elem.fields["positions"][:,:,1] = 0.5*(elem.knots[np.newaxis,:]+1)
-    inds = se_grid2.provincial_inds[i]
-    se_grid2.fields["u"][inds] = init_wave(elem.fields["positions"][:,:,0])
-se_grid2.fields["c2"][:] = C**2
-se_grid.fields["u_prev"] = se_grid.fields["u"].copy()
-se_grid2.fields["u_prev"] = se_grid2.fields["u"].copy()
-
-for bd in range(se_grid2.num_boundary_edges):
-    elemID,edge,_ = se_grid2._adjacency_from_int(se_grid2.boundary_edges[bd])
-    if elemID == 0 and edge == 2:
-        se_grid2.boundary_conditions[bd] = (2,) #flux
+def build_linked_channel(wave):
+    #======= non-DG section 1
+    edges = [(i,i+1,0,2,False) for i in range(num_cells-1)]
+    se_grid = SE.spectral_mesh_2D(N,edges)
+    wave.endow_wave(se_grid)
+    for i,elem in enumerate(se_grid.elems):
+        elem.fields["positions"][:,:,0] = \
+            0.5*(elem.knots[:,np.newaxis]+1) + i - num_cells/2
+        elem.fields["positions"][:,:,1] = 0.5*(elem.knots[np.newaxis,:]+1)
+        inds = se_grid.provincial_inds[i]
+        se_grid.fields["u"][inds] = init_wave(elem.fields["positions"][:,:,0])
+    if wave == wave2:
+        se_grid.fields["c2"][:] = C**2
     else:
-        se_grid2.boundary_conditions[bd] = (1,0) #neumann
+        se_grid.fields["c"][:] = C
 
-for bd in range(se_grid.num_boundary_edges):
-    elemID,edge,_ = se_grid._adjacency_from_int(se_grid.boundary_edges[bd])
-    if elemID == num_cells-1 and edge == 0:
-        se_grid.boundary_conditions[bd] = (2,) #flux
+    #======= non-DG section 2
+        
+    se_grid2 = SE.spectral_mesh_2D(N,edges)
+    wave.endow_wave(se_grid2)
+    for i,elem in enumerate(se_grid2.elems):
+        elem.fields["positions"][:,:,0] = \
+            0.5*(elem.knots[:,np.newaxis]+1) + i + num_cells/2
+        elem.fields["positions"][:,:,1] = 0.5*(elem.knots[np.newaxis,:]+1)
+        inds = se_grid2.provincial_inds[i]
+        se_grid2.fields["u"][inds] = init_wave(elem.fields["positions"][:,:,0])
+    if wave == wave2:
+        se_grid2.fields["c2"][:] = C**2
+    else:
+        se_grid2.fields["c"][:] = C
+    se_grid.fields["u_prev"] = se_grid.fields["u"].copy()
+    se_grid2.fields["u_prev"] = se_grid2.fields["u"].copy()
 
-se_grid.other_elem = se_grid2.elems[0]
-se_grid2.other_elem = se_grid.elems[-1]
+    #bounds
 
-alpha = 20
+    for bd in range(se_grid.num_boundary_edges):
+        elemID,edge,_ = se_grid._adjacency_from_int(se_grid.boundary_edges[bd])
+        if elemID == num_cells-1 and edge == 0:
+            if wave == wave2:
+                se_grid.boundary_conditions[bd] = (2,) #flux
+            else:
+                flux_L = bd
+                #we need a link to flux_R, so hold off
+        else:
+            if wave == wave2:
+                se_grid.boundary_conditions[bd] = (1,0) #neumann
+            else:
+                se_grid.boundary_conditions[bd] = (0,)
+    for bd in range(se_grid2.num_boundary_edges):
+        elemID,edge,_ = se_grid2._adjacency_from_int(se_grid2.boundary_edges[bd])
+        if elemID == 0 and edge == 2:
+            if wave == wave2:
+                se_grid2.boundary_conditions[bd] = (2,) #flux
+            else:
+                flux_R = bd
+                se_grid2.boundary_conditions[bd] = (0, #flux on grid2
+                    se_grid,flux_L,False)
+                se_grid.boundary_conditions[bd] = (0, #flux on grid1
+                    se_grid2,flux_R,False)
+        else:
+            if wave == wave2:
+                se_grid2.boundary_conditions[bd] = (1,0) #neumann
+            else:
+                se_grid.boundary_conditions[bd] = (0,)
 
-# 0 = central
-# 1 = rightwind (upwind for -> wind)
-# 2 = leftwind (upwind for <- wind)
-mode = 0
+    se_grid.other_elem = se_grid2.elems[0]
+    se_grid2.other_elem = se_grid.elems[-1]
+    return se_grid, se_grid2
+
+o1gL, o1gR = build_linked_channel(wave1)
+o2gL, o2gR = build_linked_channel(wave2)
+
+
+# Grote et al. scheme
 def flux_linked_channel(grid,bdryID,*flags):
     elemIDself,edgeIDself,_ =\
-        grid._adjacency_from_int(se_grid.boundary_edges[bdryID])
+        grid._adjacency_from_int(grid.boundary_edges[bdryID])
     elem = grid.elems[elemIDself]
 
     localindsself = elem.get_edge_inds(edgeIDself)
@@ -103,12 +130,7 @@ def flux_linked_channel(grid,bdryID,*flags):
         grid.other_elem.parent.get_edge_provincial_inds(
             grid.other_elem.elem_id, 2-edgeIDself
         )]
-    if mode == 0:
-        dudn = 0.5 * (du_self + du_other)
-    elif (mode == 1 and edgeIDself == 0) or (mode == 2 and edgeIDself == 2):
-        dudn = du_self
-    elif (mode == 1 and edgeIDself == 2) or (mode == 2 and edgeIDself == 0):
-        dudn = du_other
+    dudn = 0.5 * (du_self + du_other)
     c = grid.fields["c2"][provindsself]
     def_grad = elem.def_grad(localindsself[:,0],localindsself[:,1])
     
@@ -130,8 +152,8 @@ def flux_linked_channel(grid,bdryID,*flags):
             - alpha * cmax/hmax * (u_self - u_other)))
 
 
-se_grid.custom_flux = types.MethodType(flux_linked_channel,se_grid)
-se_grid2.custom_flux = types.MethodType(flux_linked_channel,se_grid2)
+o2gL.custom_flux = types.MethodType(flux_linked_channel,o2gL)
+o2gR.custom_flux = types.MethodType(flux_linked_channel,o2gR)
 
 
 
@@ -142,16 +164,18 @@ import matplotlib.pyplot as plt
 
 def plot_wave():
     plt.cla()
-    for i,elem in enumerate(se_grid.elems):
-        plt.plot(elem.fields["positions"][:,:,0],
-            se_grid.fields["u"][se_grid.provincial_inds[i]],
-            "-b", #"x-b",
-            label="standard SEM")
-    for i,elem in enumerate(se_grid2.elems):
-        plt.plot(elem.fields["positions"][:,:,0],
-            se_grid2.fields["u"][se_grid2.provincial_inds[i]],
-            "-b", #"x-b",
-            label="standard SEM")
+    for grid in [o2gL, o2gR]:
+        for i,elem in enumerate(grid.elems):
+            plt.plot(elem.fields["positions"][:,:,0],
+                grid.fields["u"][grid.provincial_inds[i]],
+                "-b", #"x-b",
+                label="second order")
+    for grid in [o1gL, o1gR]:
+        for i,elem in enumerate(grid.elems):
+            plt.plot(elem.fields["positions"][:,:,0],
+                grid.fields["u"][grid.provincial_inds[i]],
+                "-r", #"x-b",
+                label="first order order")
     plt.ylim((-0.5/np.sqrt(sigma2*2*np.pi),1/np.sqrt(sigma2*2*np.pi)))
 
 
@@ -167,20 +191,15 @@ def animate(i):
     global t
     plot_wave()
     for _ in range(display_interval):
-        
-        u_avg = (se_grid.fields["u"][
-            se_grid.get_edge_provincial_inds(num_cells-1,0)] +
-            se_grid2.fields["u"][
-            se_grid2.get_edge_provincial_inds(0,2)]
-        )/2
-        se_grid.fields["u"][se_grid.get_edge_provincial_inds(num_cells-1,0)]\
-            = u_avg
-        se_grid2.fields["u"][se_grid2.get_edge_provincial_inds(0,2)] = u_avg
+        o2gL.fields["u_prev"][:] = o2gL.fields["u"]
+        o2gR.fields["u_prev"][:] = o2gR.fields["u"]
+        o2gL.step(dt)
+        o2gR.step(dt)
 
-        se_grid.fields["u_prev"][:] = se_grid.fields["u"]
-        se_grid2.fields["u_prev"][:] = se_grid2.fields["u"]
-        se_grid.step(dt)
-        se_grid2.step(dt)
+        o1gL.step(dt,0)
+        o1gR.step(dt,0)
+        o1gL.step(dt,1)
+        o1gR.step(dt,1)
         t += dt
         print(f"frame: {i:05d}; t = {t:10.4f}",end="\r")
 
