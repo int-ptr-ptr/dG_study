@@ -3,6 +3,7 @@ import os, sys, types
 import scipy as sp
  
 directory = os.path.dirname(__file__)
+sys.path.append(directory)
 sys.path.append(os.path.dirname(directory)) #up from domains
 
 import domain
@@ -492,6 +493,18 @@ class spectral_mesh_2D(domain.Domain):
             raise Exception("Graph is not connected! "+
                 f"There should be only one root node (got {len(roots)}"+
                 " instead)")
+        
+        #case: zero edges - default to 1 element
+        if len(self.elems) == 0:
+            elem = spectral_element_2D(degree)
+            elem.parent = self
+            elem.elem_id = 0
+            self.elems.append(elem)
+            connections.append(np.zeros(4,dtype=np.uint32))
+            connected.append(None) #root
+            roots.add(0)
+
+            bdry_edges += 4
         
         #build up local <-> global (provincial?) mappings
         #================================================

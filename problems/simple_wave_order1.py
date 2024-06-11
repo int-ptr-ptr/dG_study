@@ -16,7 +16,10 @@ def step_SG2D(self,dt,stage):
     u = self.fields[uname]
     sigx = self.fields[sxname]
     sigy = self.fields[syname]
-    c = self.fields["c"]
+    if "c" in self.fields:
+        c = self.fields["c"]
+    else:
+        c = None
 
     # int_dom(taux sigxdot) = -int_dom(c^2 u dx(taux))
     #                   +int_bdry(c^2 u taux nx)
@@ -38,7 +41,10 @@ def step_SG2D(self,dt,stage):
         sig_elem = np.empty((Np1,Np1,2))
         sig_elem[:,:,0] = sigx[inds]
         sig_elem[:,:,1] = sigy[inds]
-        c2_elem = c[inds]**2
+        if c is None:
+            c2_elem = elem.fields["c"]
+        else:
+            c2_elem = c[inds]**2
         
         # partial_k phi_{a,b}(x_i,x_j) ; [k,a,b,i,j]
         gradphi = elem.lagrange_grads(
@@ -97,7 +103,10 @@ def step_SG2D(self,dt,stage):
 
 def flux_SG2D(self,stage):
     flux = np.zeros((self.basis_size,3))
-    c = self.fields["c"]
+    if "c" in self.fields:
+        c = self.fields["c"]
+    else:
+        c = None
     uname = "u" if stage == 0 else "u_pred"
     sxname = "sigx" if stage == 0 else "sigx_pred"
     syname = "sigy" if stage == 0 else "sigy_pred"
@@ -144,7 +153,10 @@ def flux_SG2D(self,stage):
         #xcoord for 1,3
         J = np.abs(def_grad[(edgeID+1)%2,(edgeID+1)%2,:])
 
-        c_edge = c[inds]
+        if c is None:
+            c_edge = elem.fields["c"][inds_e[:,0],inds_e[:,1]]
+        else:
+            c_edge = c[inds]
 
         #eigvectors of A:
         eigp = np.empty((elem.degree+1,3)); eigp[:,2] = 1/c_edge
@@ -162,6 +174,8 @@ def flux_SG2D(self,stage):
             #edge 2 or 3; we are on the - side
             eigp[:,:2] *= -1
         
+        eigp[:,:2] /= np.linalg.norm(eigp[:,:2],ord=2,axis=1)[:,np.newaxis]
+
         eign[:,:2] = eigp[:,:2]
 
 
@@ -179,9 +193,6 @@ def flux_SG2D(self,stage):
               + eigp[:,1]*sigy #n2 sigma2
               - c_edge   *u)[:,np.newaxis] #-c u
         )
-
-        if np.max(np.abs(flux)) > 1:
-            1+3
     
     return flux
 ##============end wave flux functions

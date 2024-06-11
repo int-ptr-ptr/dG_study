@@ -60,7 +60,10 @@ def step_SG2D(self,dt):
     u = self.fields["u"]
     udot = self.fields["udot"]
     uddot = self.fields["uddot"]
-    c = self.fields["c2"]
+    if "c2" in self.fields:
+        c = self.fields["c2"]
+    else:
+        c = None
 
     u += dt*udot + (0.5*dt**2)*uddot
     udot += (0.5*dt)*uddot #1/2 step before we overwrite
@@ -89,7 +92,10 @@ def step_SG2D(self,dt):
         elem = self.elems[i]
         inds = self.provincial_inds[i]
         u_elem = u[inds]
-        c_elem = c[inds]
+        if c is None:
+            c_elem = elem.fields["c2"]
+        else:
+            c_elem = c[inds]
         gradphi = elem.lagrange_grads(
             np.arange(Np1),np.arange(Np1)[np.newaxis,:],
             np.arange(Np1)[np.newaxis,np.newaxis,:],
@@ -125,6 +131,16 @@ def step_SG2D(self,dt):
 
 ##============end wave step functions
 
+def calc_elem_size(elem):
+    # returns the length of of the largest diagonal
+    a = elem.fields["positions"][0,0,:]
+    b = elem.fields["positions"][-1,0,:]
+    c = elem.fields["positions"][-1,-1,:]
+    d = elem.fields["positions"][0,-1,:]
+    return np.sqrt(max(
+        np.sum((c-a)**2),np.sum((d-b)**2)
+    ))
+
 ##============wave flux functions
 
 def flux_SE2D(self):
@@ -146,7 +162,7 @@ def flux_SE2D(self):
             
             flux[inds[:,0],inds[:,1]] += self.weights * J * bc[1]\
                   * c[inds[:,0],inds[:,1]]
-        if bc[0] == 2: #custom
+        elif bc[0] == 3: #custom
             inds = self.get_edge_inds(edgeID)
             flux[inds[:,0],inds[:,1]] += self.custom_flux(edgeID,*bc[1:])
     
@@ -154,7 +170,10 @@ def flux_SE2D(self):
 
 def flux_SG2D(self):
     flux = np.zeros((self.basis_size))
-    c = self.fields["c2"]
+    if "c2" in self.fields:
+        c = self.fields["c2"]
+    else:
+        c = None
 
     for i,bc in enumerate(self.boundary_conditions):
         #we will enforce dirichlet after the euler step
@@ -172,7 +191,70 @@ def flux_SG2D(self):
             
             flux[basis_inds] += elem.weights * J * bc[1]\
                   * c[basis_inds]
-        if bc[0] == 2: #custom
+        elif bc[0] == 2: #dG
+            #- (2,other_grid,bdry_id,flip,alpha)
+            grid_other = bc[1]
+            bd_id_other = bc[2]
+            flip = bc[3]
+            alpha = bc[4]
+            elemIDself,edgeIDself,_ = self._adjacency_from_int(
+                self.boundary_edges[i])
+            elemself = self.elems[elemIDself]
+
+            localindsself = elemself.get_edge_inds(edgeIDself)
+            provindsself = self.provincial_inds[elemIDself]\
+                                [localindsself[:,0],localindsself[:,1]]
+            
+            elemIDother, edgeIDother,_ = grid_other._adjacency_from_int(
+                grid_other.boundary_edges[bd_id_other])
+            elemother = grid_other.elems[elemIDother]
+            
+            
+            
+            du_self = elemself.bdry_normalderiv(edgeIDself,"u")
+            u_self = self.fields["u"][provindsself]
+            du_other = -elemother.bdry_normalderiv(edgeIDother,"u_prev")
+            provindsother = grid_other.get_edge_provincial_inds(
+                    elemIDother, edgeIDother)
+            u_other = grid_other.fields["u_prev"][provindsother]
+            dudn = 0.5 * (du_self + du_other)
+            if "c2" in self.fields:
+                c = self.fields["c2"][provindsself]
+                cmax_self = np.max(self.fields["c2"]
+                                [self.provincial_inds[elemIDself]])
+            else:
+                c = elemself.fields["c2"][localindsself[:,0],
+                                         localindsself[:,1]]
+                cmax_self = np.max(elemself.fields["c2"])
+            def_grad = elemself.def_grad(localindsself[:,0],
+                                         localindsself[:,1])
+            
+            #not full 2d jacobian; use boundary: ycoord for 0,2
+            #xcoord for 1,3
+            Jw = np.abs(def_grad[(edgeIDself+1)%2,
+                                 (edgeIDself+1)%2,:]) *elemself.weights
+            
+            if "c2" in grid_other.fields:
+                cmax = max(cmax_self,
+                    np.max(grid_other.fields["c2"]
+                        [grid_other.provincial_inds[elemIDother]]))
+            else:
+                cmax = max(cmax_self,
+                    np.max(elemother.fields["c2"]))
+
+            hmax = max(calc_elem_size(elemself),calc_elem_size(elemother))
+
+            # we are looking at Grote et al:
+            # flux terms: int [[u]] . {{c grad v}} + [[v]] . {{c grad u}}
+            #               + a [[u]] . [[v]]
+            flux[provindsself] += \
+                    (Jw * (-elemself.lagrange_deriv(
+                        np.arange(elemself.degree+1),
+                                1, 0)/2 * c * (u_self - u_other)
+                    + dudn * c
+                    - (alpha * cmax/hmax) * (u_self - u_other)))
+            #===================================
+        if bc[0] == 3: #custom
             elemID,edgeID,_ = self._adjacency_from_int(
                 self.boundary_edges[i])
             basis_inds = self.get_edge_provincial_inds(elemID,edgeID)
@@ -199,7 +281,16 @@ def endow_wave(domain):
     - (1,g)
         neumann, set to the value g (can be an array) at each step
         this is in real coordinates. (unless my math is wrong #TODO)
-    - (2,*flags)
+
+    - (2,other_grid,bdry_id,flip,alpha)
+        dG for nodes that line up.
+        other_grid is expected to be an instance of spectral_mesh_2D,
+        with bdry_id being the boundary that lines up with this bdry.
+        flip is a flag that, when set, flips the data first. By default,
+        the directions of increasing parameters point in the same direction.
+        alpha is the constant in Grote et al
+
+    - (3,*flags)
         custom flux scheme (say for discontinuous galerkin). the calculation
         is deferred to a function
             flux[edge] = domain.custom_flux(bdry_id,*flags)
@@ -211,16 +302,16 @@ def endow_wave(domain):
     
     Fields that are used (and need to be set):
     u - domain.fields["u"]
-        the field that is diffused
+        the field that is diffused (only for the first step; gets changed)
     udot - domain.fields["udot"]
-        the rate of change of u
+        the rate of change of u (only for the first step; gets changed)
     uddot - domain.fields["uddot"]
-        the rate of change of udot
+        the rate of change of udot (only for the first step; gets changed)
     c^2 - domain.fields["c2"]
         the constant in front of the laplace operator, representing the
         square of the wave speed
     """
-    if isinstance(domain,SE.spectral_element_2D):
+    if isinstance(domain,SE.spectral_element_2D) and False:
         domain.overwrite_step(step_SE2D)
         Np1 = domain.degree+1
         domain.fields["u"] = np.zeros((Np1,Np1))
