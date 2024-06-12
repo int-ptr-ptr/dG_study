@@ -15,3 +15,5 @@
 
 _try.ipynb
 outputs/tmp/**
+tmp/**
+playground/**
