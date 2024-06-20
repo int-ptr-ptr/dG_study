@@ -137,6 +137,214 @@ def build_domain(Lx,Ly,clusters,n,order,field_vals,
                         (2,meshes[othermesh],j,0,alpha)
     return meshes
 
+def build_regtri_lattice(Lx,Ly,clusters,n,order,field_vals,
+            alpha=0,elem_node_dist = "gll"):
+    """ Builds a lattice based on regular triangles
+    +-----------     ----------+
+    |  ╲      ╱      ╲      ╱  |
+    |N-1╲2N-1╱    ... 2MN-1╱ N-1
+    |    ╲  ╱          ╲  ╱    |
+    +-----------     ----------+
+    |    ╱  ╲             ╲    |
+    |N-2╱2N-2╲    ... 2MN-2╲ N-2
+    |  ╱      ╲             ╲  |
+    +-----------     ----------+
+         .             .
+         .             .
+         .             .
+    +-----------     ----------+
+    |  ╲      ╱      (2M-1)N╱  |
+    | 2 ╲N+2 ╱    ... ╲ +2 ╱  2|
+    |    ╲  ╱          ╲  ╱    |
+    +-----------     ----------+
+    |    ╱  ╲          ╱  ╲    |
+    | 1 ╱N+1 ╲    ...(2M-1)N  1|
+    |  ╱      ╲      ╱  +1  ╲  |
+    +-----------     ----------+
+    |  ╲      ╱      ╲      ╱  |
+    | 0 ╲ N  ╱    ...(2M-1)N  0|
+    |    ╲  ╱          ╲  ╱    |
+    +-----------     ----------+
+    where each triangle is separated into 3 quadrilaterals.
+
+    """
+    #elem_node_dist:
+    #  uniform - linspace(0,1,n+1)
+    #  gll     - same as gll nodes
+    if elem_node_dist == "uniform":
+        elem_nodes = np.linspace(0,1,n+1)
+    else:
+        elem_nodes = (1+SE.GLL_UTIL.get_knots(n))*0.5
+
+    num_meshes = np.max(clusters)+1
+    edges = [[] for _ in range(num_meshes)]
+    Nx,Ny = clusters.shape[:2] #M,N
+    if Nx % 2 != 0 or len(clusters.shape) != 3 or clusters.shape[2] != 3:
+        raise Exception("clusters must have shape (2M,N,3)!")
+    Nx //= 2
+
+    elem_hx = Lx/Nx #base
+    elem_hy = Ly/Ny #height
+
+    cell_ids = np.zeros((Nx*2,Ny,3),dtype=np.uint32)-1
+    num_cells = [0 for _ in range(num_meshes)]
+
+    def adj_indices(i,j,k,l):
+        """Returns the multi-index that corresponds to the edge
+        that should connect to (i,j,k,l), that is, side l of element k
+        in triangle (i,j)"""
+        if l == 0:
+            #interior connection : 0 -> CCW; match to 1
+            return i,j,(k+1)%3,1
+        if l == 1:
+            #interior connection : 1 -> CW; match to 0
+            return i,j,(k-1)%3,0
+        
+        #since CW and CCW directions are all preserved, orientation
+        #does not affect k
+        ext_joins = {# (k,l) in
+            (0,2):(2,3),(0,3):(1,2),
+            (1,2):(0,3),(1,3):(2,2),
+            (2,2):(1,3),(2,3):(0,2)}
+        k_other,l_other = ext_joins[k,l]
+
+        if (j + i) % 2: #triangle is pointing downwards
+            ij_offsets = [(-1,0),(+1,0),(0,+1)]
+        else: #triangle pointing upwards
+            ij_offsets = [(+1,0),(-1,0),(0,-1)]
+        #ij_offsets[k] represents the offset corresponding to the edge
+        #that is on the clockwise side of element k (l=2). l=3 is the CCW
+        #side, or equivalently the CW side of element k+1 (mod 3)
+        i_off,j_off = ij_offsets[(k + l-2) % 3]
+        
+        #wrap-around: i==0 <=> i==2Nx, j==0 <=> j==Ny
+        return (i+i_off) % (2*Nx),(j+j_off) % Ny,k_other,l_other
+
+    def multiind_order(i,j,k,l):
+        return (((i * Ny + j)
+                 * 3 + k)
+                * 4 + l)
+
+    #first, populate cell ids
+    for j in range(Ny):
+        for i in range(Nx*2):
+            for k in range(3):
+                cluster = clusters[i,j,k]
+                
+                #new cell in cluster
+                cell_ids[i,j,k] = num_cells[cluster]
+                num_cells[cluster] += 1
+
+    #next, populate edge arrays and obtain cell indices -> (i,j,k)
+    #stored in cell_locs
+    cell_locs = [np.empty((count,3),dtype=np.uint32)
+                 for count in num_cells]
+    for j in range(Ny):
+        for i in range(Nx*2):
+            for k in range(3):
+                cluster = clusters[i,j,k]
+                cid = cell_ids[i,j,k]
+                cell_locs[cluster][cid,0] = i
+                cell_locs[cluster][cid,1] = j
+                cell_locs[cluster][cid,2] = k
+                for l in range(4):
+                    i_,j_,k_,l_ = adj_indices(i,j,k,l)
+                    # only form an edge if they are in the same cluster
+                    # and we are on the smaller (i,j,k,l) index
+                    if clusters[i_,j_,k_] == cluster and\
+                        multiind_order(i,j,k,l) < multiind_order(i_,j_,k_,l_):
+
+                        edges[cluster].append(
+                            (cid,cell_ids[i_,j_,k_],l,l_,0))
+
+    meshes = [SE.spectral_mesh_2D(n,edges[i]) for i in range(num_meshes)]
+    if order == 1:
+        for mesh in meshes:
+            wave1.endow_wave(mesh)
+    if order == 2:
+        for mesh in meshes:
+            wave2.endow_wave(mesh)
+    for mesh in meshes:
+        mesh.fields["positions"] = np.empty((mesh.basis_size,2))
+    
+    tri = np.empty((3,2)) #active triangle location
+    cell = np.empty((2,2,2)) #active cell location
+    #store position fields
+    for j in range(Ny):
+        for i in range(Nx*2):
+            #reindexing for downwards/upwards triangles:
+            I = np.array((i,i+1,i-1)) if (j + i) % 2 else np.array((i,i-1,i+1))
+
+            #points of the triangle can be easily found using:
+            tri[:,0] = (I/2)           * elem_hx
+            tri[:,1] = (j+((I+j+1)%2)) * elem_hy
+            #tri[k,:] is now the (-1,-1) corner of cell k
+
+            cell[1,1,:] = np.sum(tri,axis=0)/3 # (1,1) of all cells is same
+            for k in range(3):
+                cluster = clusters[i,j,k]
+                mesh = meshes[cluster]
+                cid = cell_ids[i,j,k]
+
+                cell[0,0,:] = tri[k,:] # (-1,-1)
+                cell[0,1,:] = 0.5* (tri[k,:] + tri[(k-1)%3,:]) # (-1,1)
+                cell[1,0,:] = 0.5* (tri[k,:] + tri[(k+1)%3,:]) # (1,-1)
+
+                #we have all 4 corners of cell->global pos mapping
+                #use bilinear interpolation: (s,t) -> global pos:
+                #  p0 = (1-s) * c00 + (s) * c10
+                #  p1 = (1-s) * c01 + (s) * c11
+                #  return (1-t) * p0 + (t) * p1
+
+                # [s_indices, y +/-, x or y]
+                p = cell[np.newaxis,0,:,:] \
+                  +(cell[np.newaxis,1,:,:]-cell[np.newaxis,0,:,:])*\
+                    elem_nodes[:,np.newaxis,np.newaxis]
+                
+                pos = p[:,np.newaxis,0,:] \
+                  +(p[:,np.newaxis,1,:]-p[:,np.newaxis,0,:])*\
+                    elem_nodes[np.newaxis,:,np.newaxis]
+                
+                mesh.elems[cid].fields["positions"][:,:,:] = pos
+
+                mesh.fields["positions"][
+                    mesh.provincial_inds[cid],:] = pos
+
+
+    bd_ids = [dict() for _ in range(num_meshes)]
+    for meshID,mesh in enumerate(meshes):
+        #populate fields
+        
+        for field in field_vals:
+            mesh.fields[field][:]=field_vals[field](mesh.fields["positions"])
+
+        #flux boundaries
+        for bdID,bd in enumerate(mesh.boundary_edges):
+            elemID,l,flp = mesh._adjacency_from_int(bd)
+            bd_ids[meshID][elemID,l] = bdID
+
+            i,j,k = cell_locs[meshID][elemID,:]
+            i_,j_,k_,l_ = adj_indices(i,j,k,l)
+
+            other_meshID = clusters[i_,j_,k_]
+            other_elemID = cell_ids[i_,j_,k_]
+
+            if other_meshID != meshID:
+                if (other_elemID,l_) in bd_ids[other_meshID]:
+                    other_bdID = bd_ids[other_meshID][other_elemID,l_]
+                    #we've stored the bdID; form the link
+                    if order == 1:
+                        mesh.boundary_conditions[bdID] =\
+                            (1,meshes[other_meshID],other_bdID,flp)
+                        meshes[other_meshID].boundary_conditions[other_bdID] =\
+                            (1,mesh,bdID,flp)
+                    elif order == 2:
+                        mesh.boundary_conditions[bdID] =\
+                            (2,meshes[other_meshID],other_bdID,flp,alpha)
+                        meshes[other_meshID].boundary_conditions[other_bdID] =\
+                            (2,mesh,bdID,flp,alpha)
+    return meshes
+
 def plot_domain(meshes,title,show=False,save_filename=None,
                 vmin=-1.1,vmax=1.1, ax = None,
                 use_scatter = False, plt_callback = None, t = 0):
@@ -428,9 +636,10 @@ def run(meshes, true_u, step_func,
                 f.write(",".join(["%g" % v for v in datum])+"\n")
 
 def run_order1(Ly,c,k,num_wavelengths,vertmode,clusters,elem_order,dt,tmax,
-               print_interval = None,anim_dt = None, evolveplot_t = None,
-               run_name = "",title = None, datalog_dt = None,
-                sample_locations = None, elem_node_dist = "gll"):
+                print_interval = None,anim_dt = None, evolveplot_t = None,
+                run_name = "",title = None, datalog_dt = None,
+                sample_locations = None, elem_node_dist = "gll",
+                domaintype=0):
     ky = 2*np.pi*vertmode/Ly
     kx = np.sqrt(k**2 - ky**2)
     Lx = num_wavelengths * 2*np.pi / kx
@@ -441,12 +650,21 @@ def run_order1(Ly,c,k,num_wavelengths,vertmode,clusters,elem_order,dt,tmax,
         np.cos(np.einsum("i,...i->...",kvec,x) - omega*t))
     true_sigy = lambda x,t: ((-ky*c**2/omega) * 
         np.cos(np.einsum("i,...i->...",kvec,x) - omega*t))
-    meshes = build_domain(Lx,Ly,clusters,elem_order,1,{
-        "c": lambda x:c,
-        "u": lambda x:true_u(x,0),
-        "sigx": lambda x:true_sigx(x,0),
-        "sigy": lambda x:true_sigy(x,0),
-        },elem_node_dist=elem_node_dist)
+    if domaintype == 1:
+        meshes = build_regtri_lattice(Lx,Ly,clusters,elem_order,1,{
+            "c": lambda x:c,
+            "u": lambda x:true_u(x,0),
+            "sigx": lambda x:true_sigx(x,0),
+            "sigy": lambda x:true_sigy(x,0),
+            },elem_node_dist=elem_node_dist)
+    else:
+        meshes = build_domain(Lx,Ly,clusters,elem_order,1,{
+            "c": lambda x:c,
+            "u": lambda x:true_u(x,0),
+            "sigx": lambda x:true_sigx(x,0),
+            "sigy": lambda x:true_sigy(x,0),
+            },elem_node_dist=elem_node_dist)
+        
     def step(dt):
         for mesh in meshes:
             mesh.step(dt,0)
@@ -463,7 +681,8 @@ def run_order2(Ly,c,k,num_wavelengths,vertmode,clusters,elem_order,dt,tmax,
             alpha = 0.2,
             print_interval = None,anim_dt = None, evolveplot_t = None,
             run_name = "",title = None, datalog_dt = None,
-            sample_locations = None, elem_node_dist = "gll"):
+            sample_locations = None, elem_node_dist = "gll",
+            domaintype=0):
     ky = 2*np.pi*vertmode/Ly
     kx = np.sqrt(k**2 - ky**2)
     Lx = num_wavelengths * 2*np.pi / kx
@@ -472,12 +691,20 @@ def run_order2(Ly,c,k,num_wavelengths,vertmode,clusters,elem_order,dt,tmax,
     true_u = lambda x,t: np.cos(np.einsum("i,...i->...",kvec,x) - omega*t)
     true_udot = lambda x,t: omega*\
         np.sin(np.einsum("i,...i->...",kvec,x) - omega*t)
-    meshes = build_domain(Lx,Ly,clusters,elem_order,2,{
-        "c2": lambda x:c**2,
-        "u": lambda x:true_u(x,0),
-        "udot": lambda x:true_udot(x,0),
-        "uddot": lambda x:-omega**2*true_u(x,0),
-        },alpha=alpha,elem_node_dist=elem_node_dist)
+    if domaintype == 1:
+        meshes = build_regtri_lattice(Lx,Ly,clusters,elem_order,2,{
+            "c2": lambda x:c**2,
+            "u": lambda x:true_u(x,0),
+            "udot": lambda x:true_udot(x,0),
+            "uddot": lambda x:-omega**2*true_u(x,0),
+            },alpha=alpha,elem_node_dist=elem_node_dist)
+    else:
+        meshes = build_domain(Lx,Ly,clusters,elem_order,2,{
+            "c2": lambda x:c**2,
+            "u": lambda x:true_u(x,0),
+            "udot": lambda x:true_udot(x,0),
+            "uddot": lambda x:-omega**2*true_u(x,0),
+            },alpha=alpha,elem_node_dist=elem_node_dist)
     for mesh in meshes:
         mesh.fields["u_prev"] = np.zeros(mesh.basis_size)
     def step(dt):
@@ -492,6 +719,40 @@ def run_order2(Ly,c,k,num_wavelengths,vertmode,clusters,elem_order,dt,tmax,
         title = title)
 
 execute = (__name__ == "__main__")
+execute = False
+
+#==============================================
+N=10
+vertmode = 1
+ORD = 5
+dt = 0.004
+tmax = 1.00
+anim_dt = 0.01
+evolveplot_t=np.array([-1,0.499,0.999,3.999])*0.002
+run_name="planar_tritest"
+
+#run_name="planar_tritest_fulldiscont"
+#clusters = np.arange(N*N*3,dtype=int).reshape((N,N,3))
+#run_name="planar_tritest_tridiscont"
+#clusters = np.arange(N*N,dtype=int).reshape((N,N,1))\
+#      * np.ones((1,1,3),dtype=int)
+#run_name="planar_tritest_cont"
+clusters = np.zeros((N,N,3),dtype=int)
+clusters[:N//2,:,:]=1
+run_order1(2*np.pi,1,np.pi,3,vertmode,
+    clusters,ORD,dt,tmax,
+    #alpha = 15,
+    print_interval=1,
+    #evolveplot_t=[0,0.5,1],
+    #anim_dt=0.2,
+    run_name=run_name,
+    datalog_dt=0.1,
+    evolveplot_t=evolveplot_t,
+    anim_dt=anim_dt,
+    sample_locations=[(np.pi,0),(np.pi,3)],
+    elem_node_dist="uniform",
+    domaintype=1)
+#==============================================
 
 #situations
 #   vertical mode (M=0,1)
