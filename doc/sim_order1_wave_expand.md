@@ -29,7 +29,7 @@ $$\langle V,\partial_t U\rangle + a(U,V)=\int_{\partial\Omega}V^T\begin{pmatrix}
 
 where $V=(\tau,v)^T,U=(\sigma,u)^T$, and $a(U,V)$ is the bilinear form
 
-$$a(U,V) =\int_\Omega U^T\begin{pmatrix}0&\text{grad} \\\ c^2\text{div}&0 \end{pmatrix}V~dV$$
+$$a(U,V) =\int_\Omega V^T\begin{pmatrix}0&c^2\text{grad} \\\ \text{div}&0 \end{pmatrix}U~dV$$
 
 Calling the matrix in the boundary integral $A$, we can find the eigenpairs (in 2D)
 

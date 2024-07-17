@@ -138,7 +138,8 @@ def build_domain(Lx,Ly,clusters,n,order,field_vals,
     return meshes
 
 def build_regtri_lattice(Lx,Ly,clusters,n,order,field_vals,
-            alpha=0,elem_node_dist = "gll"):
+            alpha=0,elem_node_dist = "gll",
+            flip_mesh_axes = False):
     """ Builds a lattice based on regular triangles
     +-----------     ----------+
     |  ╲      ╱      ╲      ╱  |
@@ -167,6 +168,11 @@ def build_regtri_lattice(Lx,Ly,clusters,n,order,field_vals,
     +-----------     ----------+
     where each triangle is separated into 3 quadrilaterals.
 
+    By default, the triangles 0:(N-1) line up along the y axis.
+    If flip_mesh_axes is true, them they line up along the x axis
+    instead. In either case, clusters[i,j,:] represents triangle
+    j + N*i
+
     """
     #elem_node_dist:
     #  uniform - linspace(0,1,n+1)
@@ -183,8 +189,15 @@ def build_regtri_lattice(Lx,Ly,clusters,n,order,field_vals,
         raise Exception("clusters must have shape (2M,N,3)!")
     Nx //= 2
 
-    elem_hx = Lx/Nx #base
-    elem_hy = Ly/Ny #height
+    if flip_mesh_axes:
+        elem_base = Ly/Nx #base
+        elem_height = Lx/Ny #height
+    else:
+        elem_base = Lx/Nx #base
+        elem_height = Ly/Ny #height
+    
+
+
 
     cell_ids = np.zeros((Nx*2,Ny,3),dtype=np.uint32)-1
     num_cells = [0 for _ in range(num_meshes)]
@@ -276,9 +289,15 @@ def build_regtri_lattice(Lx,Ly,clusters,n,order,field_vals,
             I = np.array((i,i+1,i-1)) if (j + i) % 2 else np.array((i,i-1,i+1))
 
             #points of the triangle can be easily found using:
-            tri[:,0] = (I/2)           * elem_hx
-            tri[:,1] = (j+((I+j+1)%2)) * elem_hy
+            
+            if flip_mesh_axes:
+                tri[:,1] = (I/2)           * elem_base  # ypos
+                tri[:,0] = (j+((I+j+1)%2)) * elem_height# xpos
+            else:
+                tri[:,0] = (I/2)           * elem_base  # xpos
+                tri[:,1] = (j+((I+j+1)%2)) * elem_height# ypos
             #tri[k,:] is now the (-1,-1) corner of cell k
+
 
             cell[1,1,:] = np.sum(tri,axis=0)/3 # (1,1) of all cells is same
             for k in range(3):
@@ -657,6 +676,13 @@ def run_order1(Ly,c,k,num_wavelengths,vertmode,clusters,elem_order,dt,tmax,
             "sigx": lambda x:true_sigx(x,0),
             "sigy": lambda x:true_sigy(x,0),
             },elem_node_dist=elem_node_dist)
+    elif domaintype == 2:
+        meshes = build_regtri_lattice(Lx,Ly,clusters,elem_order,1,{
+            "c": lambda x:c,
+            "u": lambda x:true_u(x,0),
+            "sigx": lambda x:true_sigx(x,0),
+            "sigy": lambda x:true_sigy(x,0),
+            },elem_node_dist=elem_node_dist,flip_mesh_axes=True)
     else:
         meshes = build_domain(Lx,Ly,clusters,elem_order,1,{
             "c": lambda x:c,
@@ -698,6 +724,14 @@ def run_order2(Ly,c,k,num_wavelengths,vertmode,clusters,elem_order,dt,tmax,
             "udot": lambda x:true_udot(x,0),
             "uddot": lambda x:-omega**2*true_u(x,0),
             },alpha=alpha,elem_node_dist=elem_node_dist)
+    elif domaintype == 2:
+        meshes = build_regtri_lattice(Lx,Ly,clusters,elem_order,2,{
+            "c2": lambda x:c**2,
+            "u": lambda x:true_u(x,0),
+            "udot": lambda x:true_udot(x,0),
+            "uddot": lambda x:-omega**2*true_u(x,0),
+            },alpha=alpha,elem_node_dist=elem_node_dist,
+            flip_mesh_axes=True)
     else:
         meshes = build_domain(Lx,Ly,clusters,elem_order,2,{
             "c2": lambda x:c**2,
@@ -726,19 +760,21 @@ N=10
 vertmode = 1
 ORD = 5
 dt = 0.004
-tmax = 1.00
-anim_dt = 0.01
-evolveplot_t=np.array([-1,0.499,0.999,3.999])*0.002
-run_name="planar_tritest"
+tmax = 5.00
+anim_dt = 0.1
+evolveplot_t=np.array([-1,0.499,0.999,3.999])
 
-#run_name="planar_tritest_fulldiscont"
-#clusters = np.arange(N*N*3,dtype=int).reshape((N,N,3))
-#run_name="planar_tritest_tridiscont"
-#clusters = np.arange(N*N,dtype=int).reshape((N,N,1))\
+run_name="planar_tritest_fulldiscont"
+clusters = np.arange(N*N*3,dtype=int).reshape((N,N,3))
+
+# run_name="planar_tritest_tridiscont"
+# clusters = np.arange(N*N,dtype=int).reshape((N,N,1))\
 #      * np.ones((1,1,3),dtype=int)
-#run_name="planar_tritest_cont"
-clusters = np.zeros((N,N,3),dtype=int)
-clusters[:N//2,:,:]=1
+
+# run_name="planar_tritest_cont"
+# clusters = np.zeros((N,N,3),dtype=int)
+
+
 run_order1(2*np.pi,1,np.pi,3,vertmode,
     clusters,ORD,dt,tmax,
     #alpha = 15,
@@ -751,7 +787,7 @@ run_order1(2*np.pi,1,np.pi,3,vertmode,
     anim_dt=anim_dt,
     sample_locations=[(np.pi,0),(np.pi,3)],
     elem_node_dist="uniform",
-    domaintype=1)
+    domaintype=2)
 #==============================================
 
 #situations

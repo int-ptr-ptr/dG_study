@@ -21,12 +21,17 @@ sigma2 = 2.5 * LEN_RESCALE**2
 #wave speed
 C = 2 * LEN_RESCALE
 
+#shock moment tensor
+MOM_XX = 1
+MOM_YY = 1
+MOM_XY = 0
 
 #================================
 #  animation / simulation
 tmax = 10
 dt = 0.01
 display_interval = 10
+save_name = "shocktest"
 #================================
 
 
@@ -34,23 +39,11 @@ display_interval = 10
 x_offset = -GSIZEX * LEN_RESCALE
 y_offset = -GSIZEY/2 * LEN_RESCALE
 
-#wave_centers = [(GSIZEX/3,GSIZEY/4),(-GSIZEX/3,-GSIZEY/4)]
-wave_centers = [(-GSIZEX/3,0)]
-wave_centers = [np.array(p)*LEN_RESCALE for p in wave_centers]
 
-waveamps = [1/np.sqrt(sigma2*2*np.pi)]
-
-
+#shock is placed at location of sensor 0
 sensors = [(-GSIZEX/3,0),(-2*GSIZEX/3,0),(0,0),(GSIZEX/3,0),
            (2*GSIZEX/3,0)]
 
-
-
-init_wave = lambda x: sum((np.exp(np.sum(
-    (x - p.reshape(
-        [1 if k > 1 else 2 for k in range(len(x.shape),0,-1)] #broadcast into x
-        ))**2
-    ,-1)/(-2*sigma2)) * a for p,a in zip(wave_centers,waveamps)))
 
 
 
@@ -233,7 +226,6 @@ clusters = np.arange(GSIZEX*2*GSIZEY,dtype=int).reshape((GSIZEX*2,GSIZEY))
 # clusters[:GSIZEX,:] = 1
 meshes,cell_ids = build_grid_domain(GSIZEX*2 * LEN_RESCALE,
                       GSIZEY * LEN_RESCALE,clusters,N,{
-        "u":init_wave,
         "c":lambda x: C
     },elem_node_dist="uniform",
     xoff=x_offset,yoff=y_offset,
@@ -279,6 +271,35 @@ for i,sloc in enumerate(sensors):
         lambda y: elem.reference_to_real(0,y)[1],
         -1,1,1e-8)
 
+#place shock at sensor 0; <tau,F> = M:(del tau)(x_src)
+def new_shock(sensor_id):
+    locx = sensor_cells[sensor_id,0] #local coords
+    locy = sensor_cells[sensor_id,1]
+    mesh = meshes[sensor_cells[sensor_id,2]]
+    elemID = sensor_cells[sensor_id,3]
+    elem = mesh.elems[elemID]
+    inds = mesh.provincial_inds[elemID]
+    degp1 = elem.degree + 1
+
+    # do stuff
+
+    #tensor(k,a,b) del_k phi_{ab}(locx,locy)
+    grad = elem.lagrange_grads(
+            np.arange(degp1)[:,np.newaxis],
+            np.arange(degp1)[np.newaxis,:],
+            locx,locy,cartesian=True,use_location=True)
+    #phi is 1D basis, we want 2D basis:
+    # tau_{x,ab}=(phi_{ab},0)
+    # tau_{y,ab}=(0,phi_{ab})
+
+    #<tau_{x,:,:},F> = M : del tau_{x,:,:}(loc) = Mxx dx(tau) + Mxy dy(tau)
+    mesh.fields["sig_srcx"][inds] = MOM_XX*grad[0,:,:] + MOM_XY*grad[1,:,:]
+    #<tau_{y,:,:},F> = M : del tau_{y,:,:}(loc) = Myx dx(tau) + Myy dy(tau)
+    mesh.fields["sig_srcy"][inds] = MOM_XY*grad[0,:,:] + MOM_YY*grad[1,:,:]
+    #note: moment tensor is symmetric
+new_shock(0)
+
+
 
 num_frames = int(tmax / (dt*display_interval))
 
@@ -296,7 +317,7 @@ def animate(i):
     global t
     #plot_se_grid_contour()
     plot_domain(meshes,f"t = {t:10.4f}",show=False,
-                ax=ax,use_scatter=True,vmin=0,vmax=max(waveamps)*.1)
+                ax=ax,use_scatter=True,vmin=0,vmax=1)
     for k in range(len(sensors)):
         mesh = meshes[sensor_cells[k,2]]
         u = mesh.fields["u"][mesh.provincial_inds[sensor_cells[k,3]]]
@@ -318,7 +339,7 @@ def animate(i):
 
 anim = matplotlib.animation.FuncAnimation(fig, animate,
            frames=num_frames)
-savestr = "outputs/tmp/order1wave_expand.mp4"
+savestr = f"outputs/tmp/{save_name}.mp4"
 anim.save(filename=os.path.join(os.path.dirname(directory),
             savestr), writer="ffmpeg")
 
@@ -328,6 +349,6 @@ for k in range(len(sensors)):
     plt.plot(t_vals,sensor_vals[k,:],
         label=f"Sensor {k} ({sensors[k][0]:.2f},{sensors[k][1]:.2f})")
 plt.legend()
-savestr = "outputs/tmp/order1wave_expand_sensors.png"
+savestr = f"outputs/tmp/{save_name}_sensors.png"
 plt.savefig(os.path.join(os.path.dirname(directory),
             savestr))

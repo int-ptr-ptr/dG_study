@@ -77,6 +77,10 @@ def step_SG2D(self,dt,stage):
                 w[:,:,np.newaxis]*sig_elem, gradphi)
         
     deriv = (self.flux(stage) + B)/M[:,np.newaxis]
+    deriv[:,0] += self.fields["sig_srcx"]
+    deriv[:,1] += self.fields["sig_srcy"]
+    deriv[:,2] += self.fields["u_src"]
+    
     if stage == 0:
         #set pred deriv and pred value
         self.fields["sigx_t"][:] = deriv[:,0]
@@ -149,9 +153,13 @@ def flux_SG2D(self,stage):
         # flux term is int(V^T A U dS),
         inds_e = elem.get_edge_inds(edgeID)
         def_grad = elem.def_grad(inds_e[:,0],inds_e[:,1])
-        #not full 2d jacobian; use boundary: ycoord for 0,2
-        #xcoord for 1,3
-        J = np.abs(def_grad[(edgeID+1)%2,(edgeID+1)%2,:])
+        #not full 2d jacobian; use boundary jacobian: local ycoord for 0,2
+        #local xcoord for 1,3
+        J = np.linalg.norm(def_grad[:,(edgeID+1)%2,:],ord=2,axis=0)
+
+        #we use the sign of the full determinant for normal vectors, though
+        det = np.linalg.det(def_grad.T)
+
 
         if c is None:
             c_edge = elem.fields["c"][inds_e[:,0],inds_e[:,1]]
@@ -164,16 +172,21 @@ def flux_SG2D(self,stage):
 
         # def_grad = dX/(dxi); looking for normal derivative
         if (edgeID % 2) == 0:
-            # +/- reference x; normal is +/- def_grad[:,0]
-            eigp[:,:2] = def_grad[:,0,:].T
+            # +/- reference x; normal is ortho to def_grad[:,1];
+            # rotate CW for det > 0, and CCW for det < 0
+            eigp[:,0] = def_grad[1,1,:]*det
+            eigp[:,1] =-def_grad[0,1,:]*det
         else:
-            # +/- reference y; normal is +/- def_grad[:,1]
-            eigp[:,:2] = def_grad[:,1,:].T
+            # +/- reference y; normal is ortho to def_grad[:,0];
+            # rotate CCW for det > 0, and CW for det < 0
+            eigp[:,0] =-def_grad[1,0,:]*det
+            eigp[:,1] = def_grad[0,0,:]*det
         
         if (edgeID // 2) > 0:
             #edge 2 or 3; we are on the - side
             eigp[:,:2] *= -1
         
+        #TODO add degeneracy condition check?
         eigp[:,:2] /= np.linalg.norm(eigp[:,:2],ord=2,axis=1)[:,np.newaxis]
 
         eign[:,:2] = eigp[:,:2]
@@ -200,19 +213,26 @@ def flux_SG2D(self,stage):
 def endow_wave(domain):
     """Endows the domain with the wave equation by setting its
     step() method. For this wave problem, we solve the first order system:
-        partial_t u = div sigma
-        partial_t sigma = c^2 grad u
+        partial_t u = div sigma + G
+        partial_t sigma = c^2 grad u + F
     
     A Heun predictor-corrector scheme is used, so step() takes an additional
     stage argument. A loop should look like
 
-    foreach elem:
-        # sets predictor values
-        elem.step(dt,0)
     
-    foreach elem:
+    foreach domain:
+        domain.fields["u_src"] = G(current_time)
+        domain.fields["sig_srcx"] = F.x(current_time)
+        domain.fields["sig_srcy"] = F.y(current_time)
+        # sets predictor values
+        domain.step(dt,0)
+    
+    foreach domain:
+        domain.fields["u_src"] = G(current_time + dt)
+        domain.fields["sig_srcx"] = F.x(current_time + dt)
+        domain.fields["sig_srcy"] = F.y(current_time + dt)
         # computes corrected values and updates fields
-        elem.step(dt,1)
+        domain.step(dt,1)
     
     Setting initial conditions and boundary conditions are not handled by
     this function. domain.boundary_conditions
@@ -237,6 +257,13 @@ def endow_wave(domain):
         the conjugate (?) field sigma in the y direction
     c - domain.fields["c"]
         the wave speed field (> 0)
+    u_src - domain.fields["u_src"]
+        A source term for u, specifically the field G in the modification
+        for forces section in the documentation
+    sig_srcx - domain.fields["sig_srcx"]
+        A source term for sigma, the x component of F (mod for forces docs)
+    sig_srcy - domain.fields["sig_srcy"]
+        A source term for sigma, the y component of F (mod for forces docs)
     """
     if isinstance(domain,SE.spectral_mesh_2D):
         domain.overwrite_step(step_SG2D)
@@ -244,6 +271,9 @@ def endow_wave(domain):
         domain.fields["sigx"] = np.zeros(domain.basis_size)
         domain.fields["sigy"] = np.zeros(domain.basis_size)
         domain.fields["c"] = np.zeros(domain.basis_size)
+        domain.fields["u_src"] = np.zeros(domain.basis_size)
+        domain.fields["sig_srcx"] = np.zeros(domain.basis_size)
+        domain.fields["sig_srcy"] = np.zeros(domain.basis_size)
         #predictor
         domain.fields["u_pred"] = np.zeros(domain.basis_size)
         domain.fields["sigx_pred"] = np.zeros(domain.basis_size)

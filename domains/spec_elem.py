@@ -201,27 +201,41 @@ class spectral_element_2D(domain.Domain):
             Y[np.newaxis,np.newaxis]**
                 np.expand_dims(np.arange(Np1)[np.newaxis,:],pad),((1,2),(0,1)))
 
-    def lagrange_deriv(self, lag_index, deriv_order, knot_index):
+    def lagrange_deriv(self, lag_index, deriv_order, knot_index=None,
+                       x_coord = None):
         """Calculates the derivative
+        [(d/dx)^{deriv_order} L_{lag_index}(x)]_{x=x_coord}
+        or
         [(d/dx)^{deriv_order} L_{lag_index}(x)]_{x=x_{knot_index}}
+
+        If both x_coord and knot_index are given, then knot_index is
+        defaulted to.
 
         Note that "lagrange" refers to the lagrange interpolation polynomial,
         not lagrangian coordinates. This is a one-dimension helper function.
         """
+        if knot_index is None and x_coord is None:
+            raise Exception("Must pass knot_index or x_coord"+
+                            " into spec_elem.lagrange_deriv, but both are"+
+                            " None or not given.")
         if not isinstance(lag_index,np.ndarray):
             lag_index = np.array(lag_index)
         if not isinstance(deriv_order,np.ndarray):
             deriv_order = np.array(deriv_order)
-        if not isinstance(knot_index,np.ndarray):
-            knot_index = np.array(knot_index)
+        if knot_index is not None:
+            if not isinstance(knot_index,np.ndarray):
+                knot_index = np.array(knot_index)
+            x_coord = self.knots[knot_index]
+        if not isinstance(x_coord,np.ndarray):
+            x_coord = np.array(x_coord)
         #dims of input arrays
-        indims = max(lag_index.ndim,deriv_order.ndim,knot_index.ndim)
+        indims = max(lag_index.ndim,deriv_order.ndim,x_coord.ndim)
         lag_index = lag_index.reshape((1,*lag_index.shape,
                     *[1 for _ in range(indims-lag_index.ndim)]))
         deriv_order = deriv_order.reshape((1,*deriv_order.shape,
                     *[1 for _ in range(indims-deriv_order.ndim)]))
-        knot_index = knot_index.reshape((1,*knot_index.shape,
-                    *[1 for _ in range(indims-knot_index.ndim)]))
+        x_coord = x_coord.reshape((1,*x_coord.shape,
+                    *[1 for _ in range(indims-x_coord.ndim)]))
         
         N = self.degree
         shape = (N+1,*[1 for _ in range(indims)])
@@ -229,16 +243,19 @@ class spectral_element_2D(domain.Domain):
         L = self.lagrange_polys[lag_index,arangeshape]
         filter = arangeshape >= deriv_order
         return np.sum(L * sp.special.perm(arangeshape,deriv_order)
-            * self.knots[knot_index]
+            * x_coord
             **(filter * (arangeshape-deriv_order))\
             * (filter),axis=0)
     
-    def lagrange_grads(self,a,b,i,j, cartesian = False):
+    def lagrange_grads(self,a,b,i,j, cartesian = False,
+                use_location=False):
         """Writing phi_{a,b}(x_i,y_j) = l_a(x_i)l_b(y_j),
         calculates for arrays a,b,i,j:
             grad phi_{a,b}(x_i,y_j)
         where the first index specifies the dimension, and the rest
-        match the shape of a,b,i, and j
+        match the shape of a,b,i, and j. Alternatively, if use_location
+        is set to true, phi_{a,b}(i,j) is used instead, where i,j can be
+        floating points.
 
         cartesian==True specifies that this gradient is partial_{x}.
         Otherwise, it is in Lagrangian coordinates, so partial_{xi}.
@@ -247,6 +264,9 @@ class spectral_element_2D(domain.Domain):
             a = np.array(a)
         if not isinstance(b,np.ndarray):
             b = np.array(b)
+        if not use_location:
+            i = self.knots[i]
+            j = self.knots[j]
         if not isinstance(i,np.ndarray):
             i = np.array(i)
         if not isinstance(j,np.ndarray):
@@ -259,14 +279,15 @@ class spectral_element_2D(domain.Domain):
         b = np.expand_dims(b,tuple([0,*range(b.ndim+1,dims)]))
         #nabla_I L(...)
         lagrangian= (self.lagrange_deriv(#l_a^k(x)
-                a,np.array([1,0]),i)
+                a,np.array([1,0]),x_coord=i)
             * self.lagrange_deriv(       #l_b^k(y)
-                b,np.array([0,1]),j))
+                b,np.array([0,1]),x_coord=j))
         if cartesian:
             #deformation gradient:
             # [dX/dxi1, dX/dxi2]
             # [dY/dxi1, dY/dxi2]
-            grad = self.def_grad(i,j)[:,:,0] #collapse the dim for k
+            #collapse the dim for k
+            grad = self.def_grad(i,j,use_location=True)[:,:,0]
             #we need to get d\xi/dx
             gradinv = np.linalg.inv(grad.T)
             # [dxi1/dX, dxi1/dY] T   [dxi1/dX, dxi2/dX]
@@ -276,14 +297,20 @@ class spectral_element_2D(domain.Domain):
             return (gradinv @ np.expand_dims(lagrangian.T,-1)).T[0]
         return lagrangian
 
-    def def_grad(self,i,j):
+    def def_grad(self,i,j,use_location=False):
         """Calculates the deformation gradient matrix dX/(dxi)
         at the reference coordinates xi = (x_i,y_j).
         i and j must be broadcastable to the same shape.
         The result is an array with shape (2,2,*i.shape) where
         the first index specifies the coordinate of X and the
         second index specifies the coordinate of xi.
+
+        If use_location is set to true, the reference coordinates
+        are xi = (i,j) instead
         """
+        if not use_location:
+            i = self.knots[i]
+            j = self.knots[j]
         if not isinstance(i,np.ndarray):
             i = np.array(i)
         if not isinstance(j,np.ndarray):
@@ -296,10 +323,10 @@ class spectral_element_2D(domain.Domain):
             self.fields["positions"],
             self.lagrange_deriv(np.arange(self.degree+1), # a
                             np.array([1,0])[np.newaxis,:],# (*,k)
-                            i[np.newaxis,np.newaxis]),    # (*,*,indims)
+                    x_coord=i[np.newaxis,np.newaxis]),    # (*,*,indims)
             self.lagrange_deriv(np.arange(self.degree+1), # b
                             np.array([0,1])[np.newaxis,:],# (*,k)
-                            j[np.newaxis,np.newaxis])     # (*,*,indims)
+                        x_coord=j[np.newaxis,np.newaxis]) # (*,*,indims)
             )
         return grad
     
@@ -849,3 +876,26 @@ class spectral_mesh_2D(domain.Domain):
             # a - ycoord (flip y), b - xcoord
             return np.einsum("a,ba->b",ddn,
                              np.flip(self.fields[fieldname][inds],axis=1))
+
+
+    def get_mass_matrix(self):
+        """Builds the mass matrix for this domain, which, as is built from
+        spectral elements, is diagonal. The returned value is a
+        (self.basis_size)-shape ndarray representing the diagonal entries,
+        which are ordered according to the basis of this domain.
+        """
+        M = np.zeros((self.basis_size))
+        Np1 = self.degree
+
+        for i in range(self.num_elems):
+            elem = self.elems[i]
+            inds = self.provincial_inds[i]
+
+            #Jacobian det [i,j]
+            J = np.abs(np.linalg.det(
+                elem.def_grad(np.arange(Np1),np.arange(Np1)[np.newaxis,:]).T
+                ).T)
+            
+            # push into global matrices
+            M[inds] += elem.weights[:,np.newaxis]*elem.weights[np.newaxis,:]*J
+        return M
