@@ -56,7 +56,7 @@ def step_SE2D(self,dt):
     udot += (0.5*dt)*uddot
 
 
-def step_SG2D(self,dt):
+def step_SG2D(self,dt,stage):
     u = self.fields["u"]
     udot = self.fields["udot"]
     uddot = self.fields["uddot"]
@@ -65,14 +65,29 @@ def step_SG2D(self,dt):
     else:
         c = None
 
-    u += dt*udot + (0.5*dt**2)*uddot
-    udot += (0.5*dt)*uddot #1/2 step before we overwrite
+    #steps u:      u_n -> u_{n+1}
+    #steps udot:   udot_n -> udot_{n+1}
+    #sets  uddot = uddot_{n+1}
 
-    #enforce bdry conditions
-    for i,bc in enumerate(self.boundary_conditions):
-        if bc[0] == 0:
-            bdry = self._adjacency_from_int(self.boundary_edges[i])
-            u[self.get_edge_provincial_inds(bdry[0],bdry[1])] = bc[1]
+    #newmark beta, with gamma = 1/2
+    # [ u_{n+1} = u_n + udot_n dt + dt^2/2 uddot_beta
+    # [ udot_{n+1} = udot_n + dt*(uddot_n + uddot_{n+1})/2
+    # where uddot_beta = (1-2beta)uddot_n + 2beta uddot_{n+1}
+
+    if stage == 0:
+        #we use beta = 0 if uddot_beta is not defined
+        if "uddot_beta" in self.fields:
+            u += dt*udot + (0.5*dt**2)*self.fields["uddot_beta"]
+        else:
+            u += dt*udot + (0.5*dt**2)*uddot
+        udot += (0.5*dt)*uddot #1/2 step before we overwrite
+
+        #enforce dirichlet bdry conditions
+        for i,bc in enumerate(self.boundary_conditions):
+            if bc[0] == 0:
+                bdry = self._adjacency_from_int(self.boundary_edges[i])
+                u[self.get_edge_provincial_inds(bdry[0],bdry[1])] = bc[1]
+        return
 
     # int_dom(v udot) = -int_dom((c grad(v) + v grad(c)) . grad(u))
     #                   +int_bdry(cv grad(u) . n)
@@ -125,7 +140,7 @@ def step_SG2D(self,dt):
         # push into global matrices
         M[inds] += w
         B[inds] -= Ku_
-        
+    
     uddot[:] = (self.flux() + B)/M
     udot += (0.5*dt)*uddot
 
@@ -169,11 +184,14 @@ def flux_SE2D(self):
     return flux
 
 def flux_SG2D(self):
+    debug = False
+    if hasattr(self,"_debug_flux_store_edgevals"):
+        debug = self._debug_flux_store_edgevals
+    if debug:
+        value_pulls = dict()
+        for v in ["dudndS avg","ujmp","wgll","c2","dS","dvdndS","flux0","flux1","flux2"]:
+            value_pulls[v] = np.zeros((self.num_elems,4,self.degree+1))
     flux = np.zeros((self.basis_size))
-    if "c2" in self.fields:
-        c = self.fields["c2"]
-    else:
-        c = None
 
     for i,bc in enumerate(self.boundary_conditions):
         #we will enforce dirichlet after the euler step
@@ -188,9 +206,16 @@ def flux_SG2D(self):
             #xcoord for 1,3
             J = np.abs(def_grad[(edgeID+1)%2,(edgeID+1)%2,:])
             basis_inds = self.get_edge_provincial_inds(elemID,edgeID)
+            localinds = elem.get_edge_inds(edgeID)
             
-            flux[basis_inds] += elem.weights * J * bc[1]\
-                  * c[basis_inds]
+
+            if "c2" in self.fields:
+                c = self.fields["c2"][basis_inds]
+            else:
+                c = elem.fields["c2"][localinds[:,0],
+                                         localinds[:,1]]
+
+            flux[basis_inds] += elem.weights * J * bc[1] * c
         elif bc[0] == 2: #dG
             #- (2,other_grid,bdry_id,flip,alpha)
             grid_other = bc[1]
@@ -213,10 +238,10 @@ def flux_SG2D(self):
             
             du_self = elemself.bdry_normalderiv(edgeIDself,"u")
             u_self = self.fields["u"][provindsself]
-            du_other = -elemother.bdry_normalderiv(edgeIDother,"u_prev")
+            du_other = -elemother.bdry_normalderiv(edgeIDother,"u")
             provindsother = grid_other.get_edge_provincial_inds(
                     elemIDother, edgeIDother)
-            u_other = grid_other.fields["u_prev"][provindsother]
+            u_other = grid_other.fields["u"][provindsother]
             dudn = 0.5 * (du_self + du_other)
             if "c2" in self.fields:
                 c = self.fields["c2"][provindsself]
@@ -231,8 +256,7 @@ def flux_SG2D(self):
             
             #not full 2d jacobian; use boundary: ycoord for 0,2
             #xcoord for 1,3
-            Jw = np.abs(def_grad[(edgeIDself+1)%2,
-                                 (edgeIDself+1)%2,:]) *elemself.weights
+            J = np.linalg.norm(def_grad[:,(edgeIDself+1)%2,:],ord=2,axis=0)
             
             if "c2" in grid_other.fields:
                 cmax = max(cmax_self,
@@ -241,31 +265,76 @@ def flux_SG2D(self):
             else:
                 cmax = max(cmax_self,
                     np.max(elemother.fields["c2"]))
+            
+
+            comparevec = np.einsum("jis,js->si",def_grad,
+                        def_grad[:,(edgeIDself+1) % 2,:])
+            
+            #90 CCW rot
+            comparevec = np.flip(comparevec,axis=1) \
+                * (np.array((-1,1))[np.newaxis,:]
+                   / (np.abs(np.linalg.det(def_grad.T))[:,np.newaxis]
+                    * (-1 if (edgeIDself == 0 or edgeIDself == 3) else 1)))
+            
+
+
+            Jgradv = np.einsum("sk,ks->s",
+                comparevec,
+                elemself.lagrange_grads(localindsself[:,0],localindsself[:,1],
+                        localindsself[:,0],localindsself[:,1]))
 
             hmax = max(calc_elem_size(elemself),calc_elem_size(elemother))
 
             # we are looking at Grote et al:
             # flux terms: int [[u]] . {{c grad v}} + [[v]] . {{c grad u}}
             #               + a [[u]] . [[v]]
-            flux[provindsself] += \
-                    (Jw * (-elemself.lagrange_deriv(
-                        np.arange(elemself.degree+1),
-                                1, 0)/2 * c * (u_self - u_other)
-                    + dudn * c
-                    - (alpha * cmax/hmax) * (u_self - u_other)))
+            a = alpha * cmax / hmax
+            #a=1e-4
+            flux[provindsself] += elemself.weights * \
+                    (Jgradv/2 * c * (u_self - u_other) +
+                     J * ( dudn * c
+                           - a * (u_self - u_other)))
+            if debug:
+                #["dudndS avg","ujmp","wgll","c2","dS","dvdndS","flux0","flux1","flux2"]
+                value_pulls["flux0"][elemIDself,edgeIDself,:] = \
+                    elemself.weights * Jgradv/2 * c * (u_self-u_other)
+                value_pulls["flux1"][elemIDself,edgeIDself,:] = \
+                    elemself.weights * J * dudn * c
+                value_pulls["flux2"][elemIDself,edgeIDself,:] = \
+                    -elemself.weights * J * a * (u_self - u_other)
+                value_pulls["dudndS avg"][elemIDself,edgeIDself,:] = dudn * J
+                value_pulls["ujmp"][elemIDself,edgeIDself,:] = (u_self - u_other)
+                value_pulls["wgll"][elemIDself,edgeIDself,:] = elemself.weights
+                value_pulls["c2"][elemIDself,edgeIDself,:] = c
+                value_pulls["dS"][elemIDself,edgeIDself,:] = J
+                value_pulls["dvdndS"][elemIDself,edgeIDself,:] = Jgradv
+
+                
             #===================================
         if bc[0] == 3: #custom
             elemID,edgeID,_ = self._adjacency_from_int(
                 self.boundary_edges[i])
             basis_inds = self.get_edge_provincial_inds(elemID,edgeID)
             flux[basis_inds] += self.custom_flux(i,*bc[1:])
-    
+    if debug:
+        self.edge_fields = value_pulls
     return flux
 ##============end wave flux functions
 
 def endow_wave(domain):
     """Endows the domain with the wave equation by setting its
     step() method. For this wave problem, an explicit newmark scheme is used.
+    
+    step() takes an additional stage argument. A loop should look like
+
+    foreach elem:
+        # updates u, takes half a step of udot
+        elem.step(dt,0)
+    
+    foreach elem:
+        # takes remaining half step of udot and use updated u
+        # to set uddot
+        elem.step(dt,1)
     
     Initial conditions, boundary conditions, and discontinuous flux
     schemes are not handled by this function. domain.boundary_conditions
